@@ -1,3 +1,12 @@
+# 0.39.0
+
+ * Merge changes from main and fix platform errors and clippy warnings.
+
+# 0.38.1
+
+ * Update dependencies and fix clippy warnings.
+ * Add methods `get_interfaces` and `get_default_interface`.
+
 # 0.38.0
 
  * Add NetBSD support.

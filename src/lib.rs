@@ -25,6 +25,9 @@
 #[macro_use]
 mod macros;
 
+mod error;
+pub use error::SysInfoError;
+
 cfg_if! {
     if #[cfg(feature = "unknown-ci")] {
         // This is used in CI to check that the build for unknown targets is compiling fine.
@@ -45,6 +48,8 @@ cfg_if! {
         mod network;
         #[cfg(feature = "network")]
         use crate::unix::network_helper;
+        #[cfg(feature = "network")]
+        pub use crate::unix::network_helper::{get_network_interfaces, get_default_network_interface};
 
         #[cfg(test)]
         pub(crate) const MIN_USERS: usize = 1;
@@ -56,6 +61,8 @@ cfg_if! {
         mod network;
         #[cfg(feature = "network")]
         use crate::windows::network_helper;
+        #[cfg(feature = "network")]
+        pub use crate::windows::network_helper::{get_network_interfaces, get_default_network_interface};
 
         #[cfg(test)]
         pub(crate) const MIN_USERS: usize = 1;
@@ -74,7 +81,8 @@ pub use crate::common::component::{Component, Components};
 pub use crate::common::disk::{Disk, DiskKind, DiskRefreshKind, Disks};
 #[cfg(feature = "network")]
 pub use crate::common::network::{
-    IpNetwork, IpNetworkFromStrError, MacAddr, MacAddrFromStrError, NetworkData, Networks,
+    IpNetwork, IpNetworkFromStrError, MacAddr, MacAddrFromStrError, NetworkData, NetworkInterface,
+    Networks,
 };
 #[cfg(feature = "system")]
 pub use crate::common::system::{

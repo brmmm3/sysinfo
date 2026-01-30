@@ -533,6 +533,102 @@ impl FromStr for IpNetwork {
     }
 }
 
+/// Information about an IP and MAC address pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkInterface {
+    /// Interface name
+    pub name: String,
+    /// MAC address associated with the network interface.
+    pub mac: MacAddr,
+    /// IP address associated with the network interface.
+    pub ip: IpAddr,
+    /// IP netmask associated with the network interface.
+    pub netmask: Option<IpAddr>,
+    /// IP broadcast address associated with the network interface.
+    pub broadcast: Option<IpAddr>,
+    /// This network interface has a gateway.
+    pub gateway: Option<IpAddr>,
+    /// This network interface has a domain.
+    pub domain: Option<String>,
+    /// This network interface is the default.
+    pub is_default: bool,
+}
+
+impl NetworkInterface {
+    /// Returns `true` if the IP address of this interface is IPv4.
+    pub fn is_default(&self) -> bool {
+        self.is_default
+    }
+
+    /// Returns `true` if this network interface is a loopback interface.
+    pub fn is_loopback(&self) -> bool {
+        self.ip.is_loopback()
+    }
+
+    /// Returns `true` if this network address is a private/local network address.
+    pub fn is_private(&self) -> bool {
+        match self.ip {
+            IpAddr::V4(ipv4) => match ipv4.octets() {
+                [10, ..] => true,
+                [172, b, ..] if (16..=31).contains(&b) => true,
+                [192, 168, ..] => true,
+                _ => false,
+            },
+            IpAddr::V6(ipv6) => {
+                // fc00::/7 (unique local address)
+                (ipv6.segments()[0] & 0xfe00) == 0xfc00
+            }
+        }
+    }
+
+    /// Returns `true` if this network address is a local address.
+    pub fn is_local(&self) -> bool {
+        match self.ip {
+            IpAddr::V4(ipv4) => matches!(ipv4.octets(), [192, 168, ..]),
+            IpAddr::V6(ipv6) => ipv6.segments()[0] == 0xfd00,
+        }
+    }
+
+    /// Returns `true` if this network address is a link-local address.
+    pub fn is_link_local(&self) -> bool {
+        match self.ip {
+            IpAddr::V4(ipv4) => matches!(ipv4.octets(), [169, 254, ..]),
+            IpAddr::V6(ipv6) => (ipv6.segments()[0] & 0xffc0) == 0xfe80,
+        }
+    }
+
+    /// Returns `true` if this network address is a multicast address.
+    pub fn is_multicast(&self) -> bool {
+        self.ip.is_multicast()
+    }
+
+    /// Returns `true` if the IP address of this interface is IPv4.
+    pub fn is_ipv4(&self) -> bool {
+        matches!(self.ip, IpAddr::V4(_))
+    }
+
+    /// Returns `true` if the IP address of this interface is IPv6.
+    pub fn is_ipv6(&self) -> bool {
+        matches!(self.ip, IpAddr::V6(_))
+    }
+}
+
+impl fmt::Display for NetworkInterface {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "name: {}\nmac: {}\nip: {}\nnetmask: {:?}\nbroadcast: {:?}\ngateway: {:?}\ndefault: {}",
+            self.name,
+            self.mac,
+            self.ip,
+            self.netmask,
+            self.broadcast,
+            self.gateway,
+            self.is_default,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::*;

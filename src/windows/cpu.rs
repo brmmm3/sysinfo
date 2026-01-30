@@ -12,8 +12,9 @@ use std::sync::{Mutex, OnceLock};
 use windows::Win32::Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE};
 use windows::Win32::System::Performance::{
     PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PERF_DETAIL_NOVICE,
-    PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhCollectQueryDataEx,
-    PdhEnumObjectsW, PdhGetFormattedCounterValue, PdhOpenQueryW, PdhRemoveCounter,
+    PdhAddEnglishCounterA, PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData,
+    PdhCollectQueryDataEx, PdhEnumObjectsA, PdhGetFormattedCounterValue, PdhOpenQueryA,
+    PdhRemoveCounter,
 };
 use windows::Win32::System::Power::{
     CallNtPowerInformation, PROCESSOR_POWER_INFORMATION, ProcessorInformation,
@@ -24,9 +25,9 @@ use windows::Win32::System::SystemInformation::{
     SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
 };
 use windows::Win32::System::Threading::{
-    CreateEventW, INFINITE, RegisterWaitForSingleObject, WT_EXECUTEDEFAULT,
+    CreateEventA, INFINITE, RegisterWaitForSingleObject, WT_EXECUTEDEFAULT,
 };
-use windows::core::{PCWSTR, w};
+use windows::core::{PCSTR, PCWSTR, s};
 
 // This formula comes from Linux's include/linux/sched/loadavg.h
 // https://github.com/torvalds/linux/blob/345671ea0f9258f410eb057b9ced9cefbbe5dc78/include/linux/sched/loadavg.h#L20-L23
@@ -86,15 +87,15 @@ unsafe fn init_load_avg() -> Mutex<Option<LoadAvg>> {
     let mut query = PDH_HQUERY::default();
 
     unsafe {
-        if PdhOpenQueryW(PCWSTR::null(), 0, &mut query) != ERROR_SUCCESS.0 {
-            sysinfo_debug!("init_load_avg: PdhOpenQueryW failed");
+        if PdhOpenQueryA(PCSTR::null(), 0, &mut query) != ERROR_SUCCESS.0 {
+            sysinfo_debug!("init_load_avg: PdhOpenQueryA failed");
             return Mutex::new(None);
         }
 
         let counter = 0;
-        if PdhAddEnglishCounterW(
+        if PdhAddEnglishCounterA(
             query,
-            w!("\\System\\Cpu Queue Length"),
+            s!("\\System\\Cpu Queue Length"),
             0,
             &mut PDH_HCOUNTER(counter as *mut c_void),
         ) != ERROR_SUCCESS.0
@@ -104,7 +105,7 @@ unsafe fn init_load_avg() -> Mutex<Option<LoadAvg>> {
             return Mutex::new(None);
         }
 
-        let event = match CreateEventW(None, false, false, w!("LoadUpdateEvent")) {
+        let event = match CreateEventA(None, false, false, s!("LoadUpdateEvent")) {
             Ok(ev) => ev,
             Err(_) => {
                 PdhCloseQuery(query);
@@ -176,16 +177,16 @@ impl Query {
         let mut query = PDH_HQUERY::default();
         unsafe {
             if force_reload {
-                PdhEnumObjectsW(
-                    PCWSTR::null(),
-                    PCWSTR::null(),
+                PdhEnumObjectsA(
+                    PCSTR::null(),
+                    PCSTR::null(),
                     None,
                     &mut 0,
                     PERF_DETAIL_NOVICE,
                     true,
                 );
             }
-            if PdhOpenQueryW(PCWSTR::null(), 0, &mut query) == ERROR_SUCCESS.0 {
+            if PdhOpenQueryA(PCSTR::null(), 0, &mut query) == ERROR_SUCCESS.0 {
                 let q = InternalQuery {
                     query,
                     event: HANDLE::default(),
@@ -193,7 +194,7 @@ impl Query {
                 };
                 Some(Query { internal: q })
             } else {
-                sysinfo_debug!("Query::new: PdhOpenQueryW failed");
+                sysinfo_debug!("Query::new: PdhOpenQueryA failed");
                 None
             }
         }

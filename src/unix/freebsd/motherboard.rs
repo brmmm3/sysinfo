@@ -1,6 +1,6 @@
 // Take a look at the license at the top of the repository in the LICENSE file.
 
-use super::utils::get_sys_value_str_by_name;
+use crate::sys::utils::get_kenv_var;
 
 pub(crate) struct MotherboardInner;
 
@@ -10,27 +10,22 @@ impl MotherboardInner {
     }
 
     pub(crate) fn asset_tag(&self) -> Option<String> {
-        // FIXME: Wrong mib
-        get_sys_value_str_by_name(b"machdep.dmi.board-asset-tag\0")
+        get_kenv_var(b"smbios.planar.tag\0")
     }
 
     pub(crate) fn name(&self) -> Option<String> {
-        // FIXME: Wrong mib
-        get_sys_value_str_by_name(b"machdep.dmi.board-product\0")
+        get_kenv_var(b"smbios.planar.product\0")
     }
 
     pub(crate) fn vendor_name(&self) -> Option<String> {
-        // FIXME: Wrong mib
-        get_sys_value_str_by_name(b"machdep.dmi.board-vendor\0")
+        get_kenv_var(b"smbios.planar.maker\0")
     }
 
     pub(crate) fn version(&self) -> Option<String> {
-        // FIXME: Wrong mib
-        get_sys_value_str_by_name(b"machdep.dmi.board-version\0")
+        get_kenv_var(b"smbios.planar.version\0")
     }
 
     pub(crate) fn serial_number(&self) -> Option<String> {
-        // FIXME: Wrong mib
-        get_sys_value_str_by_name(b"machdep.dmi.board-serial\0")
+        get_kenv_var(b"smbios.planar.serial\0")
     }
 }

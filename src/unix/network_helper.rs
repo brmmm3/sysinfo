@@ -3,15 +3,19 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::CStr;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::raw::c_char;
+use std::process::Command;
 use std::ptr::null_mut;
 use std::str::from_utf8_unchecked;
 use std::{io, mem};
 
-use crate::{IpNetwork, MacAddr};
+use crate::{IpNetwork, MacAddr, NetworkInterface, SysInfoError};
 
 /// This iterator yields an interface name and address.
 pub(crate) struct InterfaceAddressIterator {
@@ -341,6 +345,231 @@ pub(crate) fn ipv6_mask_to_prefix(mask: Ipv6Addr) -> Result<u8, &'static str> {
     }
 
     Ok(prefix)
+}
+
+fn get_dns_domain_for_interface(interface: &str) -> Option<String> {
+    let output = Command::new("resolvectl")
+        .arg("status")
+        .arg(interface)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for line in stdout.lines() {
+        if line.trim_start().starts_with("DNS Domain:") {
+            return Some(line.split(':').nth(1)?.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Get all IP and MAC addresses for the network interfaces.
+pub fn get_network_interfaces() -> Result<HashMap<String, NetworkInterface>, SysInfoError> {
+    // Iterate through adapters
+    let mut interfaces = HashMap::new();
+    let mut addrs: MaybeUninit<*mut libc::ifaddrs> = MaybeUninit::uninit();
+
+    unsafe {
+        if -1 == libc::getifaddrs(addrs.as_mut_ptr()) {
+            let err = io::Error::last_os_error();
+            return Err(SysInfoError::Io {
+                kind: err.kind().to_string(),
+                message: err.to_string(),
+            });
+        }
+    }
+
+    // Safety: If there was an error, we would have already returned.
+    // Therefore, getifaddrs has initialized `addrs`.
+    let addrs = unsafe { addrs.assume_init() };
+
+    // Get default Gateway
+    let gw = get_default_gateway()?;
+    // Collect all MAC addresses
+    let mut macs = HashMap::new();
+    for ifaddr in unsafe { c_linked_list::CLinkedListMut::from_ptr(addrs, |a| a.ifa_next) }.iter() {
+        let ifa_addr = ifaddr.ifa_addr;
+        if ifa_addr.is_null() {
+            continue;
+        }
+
+        let sa_family = unsafe { (*ifa_addr).sa_family as i32 };
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let is_link_layer = sa_family == libc::AF_PACKET;
+
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let is_link_layer = sa_family == libc::AF_LINK;
+
+        if !is_link_layer {
+            continue;
+        }
+
+        let name = unsafe { CStr::from_ptr(ifaddr.ifa_name as *const _) }
+            .to_string_lossy()
+            .into_owned();
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let sll = unsafe { &*(ifa_addr as *const libc::sockaddr_ll) };
+            let mac = if sll.sll_halen == 6 {
+                let mut mac = [0u8; 6];
+                mac.copy_from_slice(&sll.sll_addr[..6]);
+                MacAddr(mac)
+            } else {
+                MacAddr([0; 6])
+            };
+            macs.insert(name, mac);
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            let sdl = unsafe { &*(ifa_addr as *const libc::sockaddr_dl) };
+            let name_len = sdl.sdl_nlen as usize;
+            let addr_len = sdl.sdl_alen as usize;
+
+            let mac = if addr_len == 6 {
+                let mut mac = [0u8; 6];
+                let mac_offset = name_len;
+                for i in 0..6 {
+                    mac[i] = sdl.sdl_data[mac_offset + i] as u8;
+                }
+                MacAddr(mac)
+            } else {
+                MacAddr([0; 6])
+            };
+            macs.insert(name, mac);
+        }
+    }
+    // Collect all interfaces
+    for ifaddr in unsafe { c_linked_list::CLinkedListMut::from_ptr(addrs, |a| a.ifa_next) }.iter() {
+        let ifa_addr = ifaddr.ifa_addr;
+        if ifa_addr.is_null() {
+            continue;
+        }
+
+        let name = unsafe { CStr::from_ptr(ifaddr.ifa_name as *const _) }
+            .to_string_lossy()
+            .into_owned();
+
+        let sa_family = unsafe { (*ifa_addr).sa_family as i32 };
+        if sa_family != libc::AF_INET && sa_family != libc::AF_INET6 {
+            continue;
+        }
+
+        if let Some(ip) = sockaddr_to_ipaddr(ifa_addr) {
+            let mac = macs.get(&name).cloned().unwrap_or(MacAddr([0; 6]));
+            let (gateway, is_default) = match gw {
+                Some((ref gw_name, gw)) => {
+                    if &name == gw_name {
+                        (Some(gw), true)
+                    } else {
+                        (None, false)
+                    }
+                }
+                None => (None, false),
+            };
+            let domain = get_dns_domain_for_interface(&name);
+            interfaces.insert(
+                name.clone(),
+                NetworkInterface {
+                    name,
+                    mac,
+                    ip,
+                    netmask: sockaddr_to_ipaddr(ifaddr.ifa_netmask),
+                    broadcast: if (ifaddr.ifa_flags & 2) != 0 {
+                        do_broadcast(ifaddr)
+                    } else {
+                        None
+                    },
+                    gateway,
+                    domain,
+                    is_default,
+                },
+            );
+        };
+    }
+    unsafe {
+        libc::freeifaddrs(addrs);
+    }
+    Ok(interfaces)
+}
+
+/// Get defaul IP and MAC address
+pub fn get_default_network_interface() -> Result<Option<NetworkInterface>, SysInfoError> {
+    for interface in get_network_interfaces()?.into_values() {
+        if interface.is_default {
+            return Ok(Some(interface));
+        }
+    }
+    Ok(None)
+}
+
+fn get_default_gateway() -> Result<Option<(String, IpAddr)>, SysInfoError> {
+    let file = File::open("/proc/net/route")?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().skip(1) {
+        // Skip header
+        let line = line?;
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() >= 8 && fields[1] == "00000000" {
+            let gateway_hex = fields[2];
+            let gateway_bytes = u32::from_str_radix(gateway_hex, 16)?;
+            let gateway = IpAddr::V4(Ipv4Addr::new(
+                (gateway_bytes >> 24) as u8,
+                (gateway_bytes >> 16) as u8,
+                (gateway_bytes >> 8) as u8,
+                gateway_bytes as u8,
+            ));
+            let interface = fields[0].to_string();
+            return Ok(Some((interface, gateway)));
+        }
+    }
+    Ok(None)
+}
+
+#[allow(unsafe_code)]
+fn sockaddr_to_ipaddr(sockaddr: *const libc::sockaddr) -> Option<IpAddr> {
+    if sockaddr.is_null() {
+        return None;
+    }
+
+    let sa_family = i32::from(unsafe { *sockaddr }.sa_family);
+
+    if sa_family == libc::AF_INET {
+        let sa = &unsafe { *(sockaddr as *const libc::sockaddr_in) };
+        Some(IpAddr::V4(Ipv4Addr::new(
+            ((sa.sin_addr.s_addr) & 255) as u8,
+            ((sa.sin_addr.s_addr >> 8) & 255) as u8,
+            ((sa.sin_addr.s_addr >> 16) & 255) as u8,
+            ((sa.sin_addr.s_addr >> 24) & 255) as u8,
+        )))
+    } else if sa_family == libc::AF_INET6 {
+        let sa = &unsafe { *(sockaddr as *const libc::sockaddr_in6) };
+        // Ignore all fe80:: addresses as these are link locals
+        if sa.sin6_addr.s6_addr[0] == 0xfe && sa.sin6_addr.s6_addr[1] == 0x80 {
+            return None;
+        }
+        Some(IpAddr::V6(Ipv6Addr::from(sa.sin6_addr.s6_addr)))
+    } else {
+        None
+    }
+}
+
+fn do_broadcast(ifaddr: &libc::ifaddrs) -> Option<IpAddr> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let addr = ifaddr.ifa_ifu;
+
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let addr = ifaddr.ifa_dstaddr;
+
+    sockaddr_to_ipaddr(addr)
 }
 
 #[cfg(test)]
