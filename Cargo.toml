@@ -1,6 +1,6 @@
 [package]
 name = "sysinfo"
-version = "0.38.0"
+version = "0.39.0"
 authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
 description = "Library to get system information such as processes, CPUs, disks, components and networks"
 repository = "https://github.com/GuillaumeGomez/sysinfo"
@@ -35,7 +35,7 @@ component = [
 disk = [
     "windows/Win32_Foundation",
     "windows/Win32_Storage_FileSystem",
-    "windows/Win32_Security", # For `windows::Win32::Storage::FileSystem::CreateFileW`.
+    "windows/Win32_Security",                  # For `windows::Win32::Storage::FileSystem::CreateFileW`.
     "windows/Win32_System_IO",
     "windows/Win32_System_Ioctl",
     "windows/Win32_System_SystemServices",
